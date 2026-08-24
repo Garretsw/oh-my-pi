@@ -414,7 +414,7 @@ The Ollama integration consists of two distinct provider definitions in `package
 ### Auth & usage
 - **Credential Source**: `loginOllama` (`packages/ai/src/registry/ollama.ts`) prompts for an optional API key (`allowEmpty: true`), defaulting to no-auth local usage with `envVars: ["OLLAMA_API_KEY"]`. `loginOllamaCloud` (`packages/ai/src/registry/ollama-cloud.ts`) mandates an API key created at `https://ollama.com/settings/keys` with `envVars: ["OLLAMA_CLOUD_API_KEY"]`.
 - **Authentication Headers**: Local requests attach `Authorization: Bearer ${apiKey}` if provided; `ollama-cloud` requires `Authorization: Bearer ${apiKey}`.
-- **Usage & Quota**: Quota tracking is registered via `ollamaUsageProvider` and `ollamaCloudUsageProvider` in `packages/ai/src/usage/ollama.ts`. Neither provider exposes a standalone usage/quota API (`validatesCredentials: false`, empty `limits`), relying on per-response `prompt_eval_count` (input) and `eval_count` (output) returned in stream completion chunks.
+- **Usage & Quota**: Quota tracking is registered via `ollamaUsageProvider` and `ollamaCloudUsageProvider` in `packages/ai/src/usage/ollama.ts`. Self-hosted Ollama exposes no quota API (`validatesCredentials: false`, empty `limits`), relying on per-response `prompt_eval_count` (input) and `eval_count` (output) returned in stream completion chunks. Ollama Cloud fetches quota from `GET https://ollama.com/api/usage` (see the per-id section below).
 
 ### Catalog model handling
 - **Descriptors**: Defined in `packages/catalog/src/provider-models/descriptors.ts`:
@@ -1254,7 +1254,7 @@ Ollama Cloud provides managed cloud access to open-weight LLMs via native `ollam
 ### Auth & usage
 - **Interactive Key Authentication**: `loginOllamaCloud` (`packages/ai/src/registry/ollama-cloud.ts`) prompts for an API key generated at `https://ollama.com/settings/keys`, rejecting empty input with `ApiKeyRequiredError`.
 - **Environment Variable Resolution**: `descriptors.ts` (`packages/catalog/src/provider-models/descriptors.ts`) and `getEnvApiKey` (`packages/ai/src/stream.ts`) resolve credentials via `OLLAMA_CLOUD_API_KEY`.
-- **Usage Accounting**: `ollamaCloudUsageProvider` (`packages/ai/src/usage/ollama.ts`) handles usage for `ollama-cloud` using `fetchOllamaUsage`. Because Ollama Cloud has no standalone quota API (`validatesCredentials: false`), usage is tracked per-response via `prompt_eval_count` and `eval_count` stream metrics.
+- **Usage Accounting**: `ollamaCloudUsageProvider` (`packages/ai/src/usage/ollama.ts`) fetches `GET https://ollama.com/api/usage` with the Bearer API key and normalizes the per-window fractional quotas (`limits.session.usage`, `limits.weekly.usage`) into 5h/7d percent-window `UsageLimit` entries (`ollama-cloud:session`, `ollama-cloud:weekly`). The payload carries no reset timestamps, so windows report `durationMs` only; the documented cadence is 5-hour session / 7-day weekly resets. Non-2xx responses throw `ProviderHttpError` (`validatesCredentials: true`), so credential health checks mark rejected keys failed. Per-response `prompt_eval_count` / `eval_count` stream metrics remain the source of per-request token usage.
 
 ### Catalog model handling
 - **Descriptor & Discovery Wiring**: Descriptor `CATALOG_PROVIDERS` (`packages/catalog/src/provider-models/descriptors.ts`) defines `defaultModel: "gpt-oss:120b"`, `envVars: ["OLLAMA_CLOUD_API_KEY"]`, options builder `ollamaCloudModelManagerOptions`, and `catalogDiscovery: { label: "Ollama Cloud", oauthProvider: "ollama-cloud" }`.
