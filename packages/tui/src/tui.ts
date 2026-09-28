@@ -1382,9 +1382,7 @@ export class TUI extends Container {
 	 *
 	 * Sourced from the provider's full semantic tail — the same rows the resize
 	 * buffer paints — and used only when its last rows are exactly this frame's
-	 * viewport, which proves the two models agree on alignment. Inline images
-	 * are excluded (their placements are tracked per paint), so terminals with
-	 * an image protocol keep the viewport-only repaint.
+	 * viewport, which proves the two models agree on alignment.
 	 */
 	#restoreRowsAboveViewport(
 		provider: TerminalFrameProvider,
@@ -1392,7 +1390,7 @@ export class TUI extends Container {
 		height: number,
 		viewport: readonly string[],
 	): readonly string[] | undefined {
-		if (!provider.renderResizeFrame || TERMINAL.imageProtocol !== null) return undefined;
+		if (!provider.renderResizeFrame) return undefined;
 		const tail = provider.renderResizeFrame({ columns: width, rows: height });
 		const above = tail.length - viewport.length;
 		if (above <= 0) return undefined;
@@ -2704,9 +2702,17 @@ export class TUI extends Container {
 		this.#debugNextWindowTop = 0;
 		let plan: TerminalFramePlan;
 		let viewport: string[];
+		const restoreScreen = this.#restoreScreenOnNextRender;
+		this.#restoreScreenOnNextRender = false;
+		let restoreAbove: readonly string[] | undefined;
 		do {
 			this.#imageBudget.beginPass();
 			plan = provider.renderFrame({ columns: width, rows: height });
+			// Rendered inside the same budget pass as the viewport so images in
+			// the restored rows are observed and transmitted like any other.
+			restoreAbove = restoreScreen
+				? this.#restoreRowsAboveViewport(provider, width, height, plan.viewport)
+				: undefined;
 			viewport = Array.from(plan.viewport);
 			if (viewport.length > height) {
 				const message = `Frame provider returned ${viewport.length} rows for a ${height}-row viewport`;
@@ -2717,11 +2723,6 @@ export class TUI extends Container {
 			viewport = this.#compositeVisibleOverlays(viewport, width, height);
 		} while (this.#imageBudget.endPass());
 		if (this.#maybeDeferGhosttyInitialImagePaint()) return;
-		let restoreAbove: readonly string[] | undefined;
-		if (this.#restoreScreenOnNextRender) {
-			this.#restoreScreenOnNextRender = false;
-			restoreAbove = this.#restoreRowsAboveViewport(provider, width, height, plan.viewport);
-		}
 		this.#emitPlanFrame(width, height, viewport, plan.history, provider, restoreAbove);
 	}
 	/**

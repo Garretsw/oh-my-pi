@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "bun:test";
-import { type TerminalFramePlan, type TerminalFrameProvider, TUI, type ViewportSize } from "@oh-my-pi/pi-tui";
+import {
+	ImageProtocol,
+	setTerminalImageProtocol,
+	TERMINAL,
+	type TerminalFramePlan,
+	type TerminalFrameProvider,
+	TUI,
+	type ViewportSize,
+} from "@oh-my-pi/pi-tui";
 import { ProcessTerminal } from "@oh-my-pi/pi-tui/terminal";
 import { setTerminalHeadless } from "@oh-my-pi/pi-utils";
 import { VirtualTerminal } from "./virtual-terminal";
@@ -142,25 +150,41 @@ const immediateScheduler = {
 	},
 };
 
+function restoreAfterBlankedClient(): { before: string[]; blanked: string[]; after: string[] } {
+	const terminal = new FocusTerminal(30, 5);
+	const tui = new TUI(terminal, undefined, { renderScheduler: immediateScheduler });
+	tui.setFrameProvider(new TranscriptProvider());
+	tui.start();
+	const painted = () => terminal.getViewport().map(row => row.trimEnd());
+	const before = painted();
+	// A reattached control-mode client rebuilt the pane blank: nothing in the
+	// app's model changed, so an ordinary render writes no rows.
+	terminal.write("\x1b[H\x1b[2J");
+	tui.requestRender();
+	const blanked = painted();
+	terminal.reportFocus(true);
+	const after = painted();
+	tui.stop();
+	return { before, blanked, after };
+}
+
 describe("TUI focus-in repaint", () => {
+	const expected = ["answer-line-1", "answer-line-2", "answer-line-3", "editor", "status-line"];
+
 	it("restores committed rows above the viewport as well as the viewport, where an ordinary render diffs both away", () => {
-		const terminal = new FocusTerminal(30, 5);
-		const tui = new TUI(terminal, undefined, { renderScheduler: immediateScheduler });
-		tui.setFrameProvider(new TranscriptProvider());
-		tui.start();
-		const painted = () => terminal.getViewport().map(row => row.trimEnd());
-		const expected = ["answer-line-1", "answer-line-2", "answer-line-3", "editor", "status-line"];
-		expect(painted()).toEqual(expected);
+		const { before, blanked, after } = restoreAfterBlankedClient();
+		expect(before).toEqual(expected);
+		expect(blanked).toEqual(["", "", "", "", ""]);
+		expect(after).toEqual(expected);
+	});
 
-		// A reattached control-mode client rebuilt the pane blank: nothing in
-		// the app's model changed, so an ordinary render writes no rows.
-		terminal.write("\x1b[H\x1b[2J");
-		tui.requestRender();
-		expect(painted()).toEqual(["", "", "", "", ""]);
-
-		terminal.reportFocus(true);
-
-		expect(painted()).toEqual(expected);
-		tui.stop();
+	it("restores the full screen with an image protocol active, as tmux sessions default to Kitty", () => {
+		const originalProtocol = TERMINAL.imageProtocol;
+		setTerminalImageProtocol(ImageProtocol.Kitty);
+		try {
+			expect(restoreAfterBlankedClient().after).toEqual(expected);
+		} finally {
+			setTerminalImageProtocol(originalProtocol);
+		}
 	});
 });
