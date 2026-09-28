@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed a blank or stale screen after reattaching to tmux from a control-mode client (iTerm2, Shellfish) until the window was resized; the viewport now repaints when tmux reports focus returning to the pane.
+
 ## [18.2.5] - 2026-09-17
 
 ### Added

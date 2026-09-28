@@ -869,6 +869,7 @@ export class TUI extends Container {
 	#hasEverRendered = false;
 	#stopped = false;
 	#cancelPostmortemRestore?: () => void;
+	#unsubscribeFocus?: () => void;
 	/** True between a `deferInput` start() and enableInput(). */
 	#inputDeferred = false;
 	// Always-on event-loop lag probe. The high default threshold keeps it quiet;
@@ -1315,6 +1316,10 @@ export class TUI extends Container {
 		if (this.#stopped) return;
 		this.#cancelPostmortemRestore?.();
 		this.#cancelPostmortemRestore = postmortem.register("tui-restore", () => this.stop());
+		this.#unsubscribeFocus?.();
+		this.#unsubscribeFocus = this.terminal.onFocusChange?.(focused => {
+			if (focused) this.#handleFocusIn();
+		});
 		for (const listener of this.#startListeners) {
 			try {
 				listener();
@@ -1347,6 +1352,21 @@ export class TUI extends Container {
 	 * repaints — so keep the borrow, whose settled transaction ends in the
 	 * {@link ResizeScrollbackMode} rebuild that erases conhost's stale copy.
 	 */
+	/**
+	 * Repaint the viewport when the terminal reports focus-in. tmux reports one
+	 * on every client attach, and a control-mode client (iTerm2, Shellfish)
+	 * reconstructs the pane from its own snapshot while an idle app writes
+	 * nothing, so a same-size reattach could otherwise stay blank or stale
+	 * until the next resize. Viewport only: native history is left alone, and
+	 * an in-flight resize transaction already ends in its own settled repaint.
+	 */
+	#handleFocusIn(): void {
+		if (this.#stopped || !this.#hasEverRendered) return;
+		if (this.#resizeAltActive || this.#resizeProbe || this.#resizeInPlaceActive) return;
+		this.#forgetHardwareCursorState();
+		this.requestRender(true);
+	}
+
 	#resizeRepaintsInPlace(): boolean {
 		const override = resizeInPlaceOverride();
 		if (override !== null) return override;
@@ -1950,6 +1970,8 @@ export class TUI extends Container {
 	stop(): void {
 		this.#cancelPostmortemRestore?.();
 		this.#cancelPostmortemRestore = undefined;
+		this.#unsubscribeFocus?.();
+		this.#unsubscribeFocus = undefined;
 		this.#debugServer?.stop();
 		this.#debugServer = undefined;
 		this.#resizeSettleTimer?.cancel();

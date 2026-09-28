@@ -410,6 +410,7 @@ export function emergencyTerminalRestore(): void {
 					"\x1b[?7h" + // Restore autowrap
 					"\x1b[?1l\x1b>" + // Restore normal cursor-key + keypad mode (rmkx, #6374)
 					"\x1b[?2004l" + // Disable bracketed paste
+					"\x1b[?1004l" + // Disable focus reporting
 					"\x1b[?2031l" + // Disable Mode 2031 appearance notifications
 					"\x1b[?2048l" + // Disable in-band resize notifications
 					"\x1b[?5522l" + // Disable enhanced paste notifications
@@ -527,6 +528,13 @@ export interface Terminal {
 	 * working; absent means the terminal itself owns the grid.
 	 */
 	readonly hostOwnsGridOnResize?: boolean;
+
+	/**
+	 * Register a callback for DEC 1004 focus reports (`CSI I` focus-in,
+	 * `CSI O` focus-out). Returns an unsubscribe function. Optional so custom
+	 * Terminals built against older pi-tui versions keep working.
+	 */
+	onFocusChange?(callback: (focused: boolean) => void): () => void;
 
 	// Whether Kitty keyboard protocol is active
 	get kittyProtocolActive(): boolean;
@@ -752,6 +760,9 @@ export class ProcessTerminal implements Terminal {
 		(appearance: TerminalAppearance, requestToken?: TerminalAppearanceRequestToken) => void
 	> = [];
 	#appearance: TerminalAppearance | undefined;
+	#focusCallbacks: Array<(focused: boolean) => void> = [];
+	/** Whether DEC 1004 focus reporting is currently enabled. */
+	#focusReporting = false;
 	#osc11Pending = false;
 	#osc11ActiveToken?: TerminalAppearanceRequestToken;
 	#osc11QueuedQuery?: { route: Osc11QueryRoute; token?: TerminalAppearanceRequestToken };
@@ -834,6 +845,30 @@ export class ProcessTerminal implements Terminal {
 			const index = this.#appearanceReportCallbacks.indexOf(callback);
 			if (index !== -1) this.#appearanceReportCallbacks.splice(index, 1);
 		};
+	}
+
+	onFocusChange(callback: (focused: boolean) => void): () => void {
+		this.#focusCallbacks.push(callback);
+		let subscribed = true;
+		return () => {
+			if (!subscribed) return;
+			subscribed = false;
+			const index = this.#focusCallbacks.indexOf(callback);
+			if (index !== -1) this.#focusCallbacks.splice(index, 1);
+		};
+	}
+
+	#handleFocusReport(focused: boolean): void {
+		// A focus-in after a tmux reattach can follow a client that never saw
+		// our last cursor-visibility write: re-establish it on the next call.
+		if (focused) this.#cursorVisible = undefined;
+		for (const callback of this.#focusCallbacks) {
+			try {
+				callback(focused);
+			} catch {
+				/* ignore callback errors */
+			}
+		}
 	}
 
 	/**
@@ -962,6 +997,16 @@ export class ProcessTerminal implements Terminal {
 
 		// Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
 		this.#safeWrite("\x1b[?2004h");
+
+		// Inside tmux, subscribe to DEC 1004 focus reports. tmux delivers a
+		// focus-in to the pane whenever a client attaches — including
+		// control-mode clients (iTerm2, Shellfish) that rebuild the pane from
+		// their own snapshot and receive no bytes from an idle app — so the
+		// renderer can repaint the viewport on reattach.
+		if (isInsideTmux()) {
+			this.#focusReporting = true;
+			this.#safeWrite("\x1b[?1004h");
+		}
 
 		// Force normal cursor-key (DECCKM) and numeric-keypad mode (terminfo
 		// `rmkx` = "\x1b[?1l\x1b>"). omp decodes both CSI ("\x1b[A") and SS3
@@ -1226,6 +1271,14 @@ export class ProcessTerminal implements Terminal {
 			const resizeMatch = sequence.match(inBandResizePattern);
 			if (resizeMatch) {
 				this.#handleInBandResizeReport(resizeMatch[1]!, resizeMatch[2]!, resizeMatch[3]!, resizeMatch[4]!);
+				return;
+			}
+
+			// DEC 1004 focus report. Exclusively terminal->host, never a keystroke,
+			// so it is swallowed even when reporting is off (a mode left enabled by
+			// an earlier program must not type "[I" into the composer).
+			if (sequence === "\x1b[I" || sequence === "\x1b[O") {
+				this.#handleFocusReport(sequence === "\x1b[I");
 				return;
 			}
 
@@ -1765,6 +1818,11 @@ export class ProcessTerminal implements Terminal {
 		// Disable bracketed paste mode
 		this.#safeWrite("\x1b[?2004l");
 		this.#safeWrite("\x1b[?5522l");
+
+		if (this.#focusReporting) {
+			this.#focusReporting = false;
+			this.#safeWrite("\x1b[?1004l");
+		}
 
 		// Hand the cursor shape back to the user's terminal configuration; a Vim
 		// Normal-mode block must not outlive the session in their shell.
