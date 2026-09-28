@@ -104,11 +104,20 @@ describe("ProcessTerminal DEC 1004 focus reporting", () => {
 	});
 });
 
-class StaticFrameProvider implements TerminalFrameProvider {
+class TranscriptProvider implements TerminalFrameProvider {
+	readonly committed = ["answer-line-1", "answer-line-2", "answer-line-3"];
+	readonly live = ["editor", "status-line"];
+	#history: { id: number; rows: string[] } | undefined = { id: 1, rows: this.committed };
+
 	renderFrame(viewport: ViewportSize): TerminalFramePlan {
-		return { viewport: ["transcript-row", "editor", "status-line"].slice(-viewport.rows) };
+		return { history: this.#history, viewport: this.live.slice(-viewport.rows) };
 	}
-	acknowledgeHistory(): void {}
+	renderResizeFrame(viewport: ViewportSize): readonly string[] {
+		return [...this.committed, ...this.live].slice(-viewport.rows);
+	}
+	acknowledgeHistory(): void {
+		this.#history = undefined;
+	}
 }
 
 class FocusTerminal extends VirtualTerminal {
@@ -134,23 +143,24 @@ const immediateScheduler = {
 };
 
 describe("TUI focus-in repaint", () => {
-	it("repaints a viewport the host lost when focus returns, where an ordinary render diffs it away", () => {
-		const terminal = new FocusTerminal(30, 6);
+	it("restores committed rows above the viewport as well as the viewport, where an ordinary render diffs both away", () => {
+		const terminal = new FocusTerminal(30, 5);
 		const tui = new TUI(terminal, undefined, { renderScheduler: immediateScheduler });
-		tui.setFrameProvider(new StaticFrameProvider());
+		tui.setFrameProvider(new TranscriptProvider());
 		tui.start();
 		const painted = () => terminal.getViewport().map(row => row.trimEnd());
-		expect(painted()).toContain("editor");
+		const expected = ["answer-line-1", "answer-line-2", "answer-line-3", "editor", "status-line"];
+		expect(painted()).toEqual(expected);
 
 		// A reattached control-mode client rebuilt the pane blank: nothing in
 		// the app's model changed, so an ordinary render writes no rows.
 		terminal.write("\x1b[H\x1b[2J");
 		tui.requestRender();
-		expect(painted()).not.toContain("editor");
+		expect(painted()).toEqual(["", "", "", "", ""]);
 
 		terminal.reportFocus(true);
 
-		expect(painted()).toEqual(expect.arrayContaining(["transcript-row", "editor", "status-line"]));
+		expect(painted()).toEqual(expected);
 		tui.stop();
 	});
 });

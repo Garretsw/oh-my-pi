@@ -870,6 +870,9 @@ export class TUI extends Container {
 	#stopped = false;
 	#cancelPostmortemRestore?: () => void;
 	#unsubscribeFocus?: () => void;
+	// Set by focus-in: the next provider frame also repaints the committed
+	// history rows visible above the viewport (see #restoreRowsAboveViewport).
+	#restoreScreenOnNextRender = false;
 	/** True between a `deferInput` start() and enableInput(). */
 	#inputDeferred = false;
 	// Always-on event-loop lag probe. The high default threshold keeps it quiet;
@@ -1357,14 +1360,46 @@ export class TUI extends Container {
 	 * on every client attach, and a control-mode client (iTerm2, Shellfish)
 	 * reconstructs the pane from its own snapshot while an idle app writes
 	 * nothing, so a same-size reattach could otherwise stay blank or stale
-	 * until the next resize. Viewport only: native history is left alone, and
-	 * an in-flight resize transaction already ends in its own settled repaint.
+	 * until the next resize. Repaints the visible screen — the viewport plus
+	 * the committed rows above it — without touching native scrollback.
 	 */
 	#handleFocusIn(): void {
 		if (this.#stopped || !this.#hasEverRendered) return;
+		// An in-flight resize transaction ends in its own settled repaint, which
+		// restores the full screen inside a multiplexer (#resolveResizeAnchor).
 		if (this.#resizeAltActive || this.#resizeProbe || this.#resizeInPlaceActive) return;
 		this.#forgetHardwareCursorState();
+		this.#restoreScreenOnNextRender = true;
 		this.requestRender(true);
+	}
+
+	/**
+	 * Committed history rows to repaint directly above the viewport, bottom
+	 * first, for a focus-in restore. The viewport alone is only the live tail
+	 * (editor, status, streaming block): the transcript above it was written to
+	 * the screen once and is never rewritten, so a client that lost its screen
+	 * would otherwise keep a blank region above the chrome.
+	 *
+	 * Sourced from the provider's full semantic tail — the same rows the resize
+	 * buffer paints — and used only when its last rows are exactly this frame's
+	 * viewport, which proves the two models agree on alignment. Inline images
+	 * are excluded (their placements are tracked per paint), so terminals with
+	 * an image protocol keep the viewport-only repaint.
+	 */
+	#restoreRowsAboveViewport(
+		provider: TerminalFrameProvider,
+		width: number,
+		height: number,
+		viewport: readonly string[],
+	): readonly string[] | undefined {
+		if (!provider.renderResizeFrame || TERMINAL.imageProtocol !== null) return undefined;
+		const tail = provider.renderResizeFrame({ columns: width, rows: height });
+		const above = tail.length - viewport.length;
+		if (above <= 0) return undefined;
+		for (let index = 0; index < viewport.length; index++) {
+			if (tail[above + index] !== viewport[index]) return undefined;
+		}
+		return tail.slice(0, above);
 	}
 
 	#resizeRepaintsInPlace(): boolean {
@@ -1731,6 +1766,11 @@ export class TUI extends Container {
 		// Resolved geometry invalidates the replay offset with the old anchor;
 		// the forced repaint recomputes it (usually zero).
 		this.#providerViewportPadTop = 0;
+		// A multiplexer client may rebuild or reflow the pane on its own terms
+		// across a resize (a control-mode reattach resizes the window, and its
+		// focus-in lands inside this transaction), so the settled repaint also
+		// restores the committed rows above the viewport, not just the viewport.
+		if (isInsideTerminalMultiplexer()) this.#restoreScreenOnNextRender = true;
 		this.#forceViewportRepaintOnNextRender = true;
 		this.requestRender(true);
 	}
@@ -2677,7 +2717,12 @@ export class TUI extends Container {
 			viewport = this.#compositeVisibleOverlays(viewport, width, height);
 		} while (this.#imageBudget.endPass());
 		if (this.#maybeDeferGhosttyInitialImagePaint()) return;
-		this.#emitPlanFrame(width, height, viewport, plan.history, provider);
+		let restoreAbove: readonly string[] | undefined;
+		if (this.#restoreScreenOnNextRender) {
+			this.#restoreScreenOnNextRender = false;
+			restoreAbove = this.#restoreRowsAboveViewport(provider, width, height, plan.viewport);
+		}
+		this.#emitPlanFrame(width, height, viewport, plan.history, provider, restoreAbove);
 	}
 	/**
 	 * Re-offer finalized history once after a settled resize.
@@ -2776,6 +2821,7 @@ export class TUI extends Container {
 		viewportRows: string[],
 		offered: HistoryBatch | undefined,
 		provider: TerminalFrameProvider | undefined,
+		restoreAbove?: readonly string[],
 	): void {
 		// Callers composite their overlays inside the budget pass, so `viewportRows`
 		// is already the complete frame. Bound the store here rather than at
@@ -2862,6 +2908,25 @@ export class TUI extends Container {
 		// after a settled width resize.
 		if (destructiveReset) buffer += "\x1b[H\x1b[2J\x1b[3J";
 		for (const sequence of this.#imageBudget.takeTransmits()) buffer += sequence;
+		// Focus-in restore: rewrite the committed rows between the screen top and
+		// the viewport, bottom-aligned to the viewport top. Only on a frame that
+		// neither appends history nor moves the anchor, so the rows land exactly
+		// where the terminal already holds them.
+		if (restoreAbove !== undefined && !destructiveReset && historyRows.length === 0 && startTop === newTop) {
+			const above = restoreAbove.slice(Math.max(0, restoreAbove.length - startTop));
+			const preparedAbove = this.#prepareLinesArray(above, width);
+			const firstRow = startTop - above.length;
+			for (let index = 0; index < above.length; index++) {
+				buffer += `\x1b[${firstRow + index + 1};1H${this.#lineRewriteSequence(
+					preparedAbove.rows[index]!,
+					width,
+					firstRow + index,
+					-1,
+					-1,
+					this.#osc66SpacerGlyphWidth(preparedAbove.lines, index),
+				)}`;
+			}
+		}
 		const diffable =
 			geometryStable &&
 			historyRows.length === 0 &&
