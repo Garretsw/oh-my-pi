@@ -109,6 +109,17 @@ function resizeInPlaceOverride(): boolean | null {
 	if (override === "0" || override === "false") return false;
 	return null;
 }
+/**
+ * `PI_TUI_ALT_SCREEN=1`: host the whole UI on the alternate screen, like a
+ * fullscreen TUI, instead of inline on the normal screen. Nothing reaches
+ * native scrollback, so a client that rebuilds scrollback on its own terms
+ * (tmux control-mode clients such as Shellfish or iTerm2) has no scroll
+ * position to misplace; retired transcript rows simply scroll off the top.
+ */
+function hostAltScreenRequested(): boolean {
+	const value = Bun.env.PI_TUI_ALT_SCREEN;
+	return value === "1" || value === "true";
+}
 type InputListenerResult = { consume?: boolean; data?: string } | undefined;
 type InputListener = (data: string) => InputListenerResult;
 type StartListener = () => void;
@@ -873,6 +884,9 @@ export class TUI extends Container {
 	// Set by focus-in: the next provider frame also repaints the committed
 	// history rows visible above the viewport (see #restoreRowsAboveViewport).
 	#restoreScreenOnNextRender = false;
+	// PI_TUI_ALT_SCREEN: the UI lives on the alternate screen for the whole
+	// session (see hostAltScreenRequested).
+	#hostAltScreen = false;
 	/** True between a `deferInput` start() and enableInput(). */
 	#inputDeferred = false;
 	// Always-on event-loop lag probe. The high default threshold keeps it quiet;
@@ -1330,6 +1344,15 @@ export class TUI extends Container {
 				// Startup listeners are feature hooks; one broken hook must not prevent rendering.
 			}
 		}
+		this.#hostAltScreen = hostAltScreenRequested();
+		if (this.#hostAltScreen) {
+			// A fresh alternate screen is blank (and, on Kitty, has an empty
+			// graphics store): repaint the whole visible tail on the first frame.
+			this.terminal.write("\x1b[?1049h");
+			setAltScreenActive(true);
+			this.#imageBudget.forgetTransmitted();
+			this.#restoreScreenOnNextRender = true;
+		}
 		this.terminal.hideCursor();
 		this.#recordHardwareCursorHidden();
 		if (!this.#inputDeferred) {
@@ -1401,6 +1424,9 @@ export class TUI extends Container {
 	}
 
 	#resizeRepaintsInPlace(): boolean {
+		// Already on the alternate screen: borrowing it for the resize is
+		// meaningless, and its exit would drop to the normal screen.
+		if (this.#hostAltScreen) return true;
 		const override = resizeInPlaceOverride();
 		if (override !== null) return override;
 		if (isInsideTerminalMultiplexer() || this.terminal.hostOwnsGridOnResize === true) return false;
@@ -1768,7 +1794,7 @@ export class TUI extends Container {
 		// across a resize (a control-mode reattach resizes the window, and its
 		// focus-in lands inside this transaction), so the settled repaint also
 		// restores the committed rows above the viewport, not just the viewport.
-		if (isInsideTerminalMultiplexer()) this.#restoreScreenOnNextRender = true;
+		if (isInsideTerminalMultiplexer() || this.#hostAltScreen) this.#restoreScreenOnNextRender = true;
 		this.#forceViewportRepaintOnNextRender = true;
 		this.requestRender(true);
 	}
@@ -2037,11 +2063,14 @@ export class TUI extends Container {
 			// sequence itself can re-enable tracking (overlay-close restore),
 			// so the final OFF goes last or the shell keeps reporting.
 			const mouseExit = this.#mouseTracking !== "off" ? MOUSE_TRACKING_OFF : "";
+			// Host-alt mode leaves the alternate screen once, at the end of stop().
 			const exitSequence = this.#pendingAltExit
 				? `${this.#pendingAltExit}${mouseExit}`
-				: `${mouseExit}${this.#keyboardEnhancementExit()}\x1b[?1049l`;
+				: this.#hostAltScreen
+					? mouseExit
+					: `${mouseExit}${this.#keyboardEnhancementExit()}\x1b[?1049l`;
 			this.terminal.write(exitSequence);
-			setAltScreenActive(false);
+			if (!this.#hostAltScreen) setAltScreenActive(false);
 			this.#altActive = false;
 			this.#mouseTracking = "off";
 			this.#altPreviousLines = [];
@@ -2059,7 +2088,9 @@ export class TUI extends Container {
 		// erase native history and re-stream the whole transcript at quit; drop
 		// the latch so the flush below writes only un-retired rows.
 		this.#clearScrollbackOnNextRender = false;
-		this.#flushHistoryBeforeStop();
+		// Host-alt mode has no native history to hand to the shell: anything
+		// flushed here would be discarded with the alternate screen.
+		if (!this.#hostAltScreen) this.#flushHistoryBeforeStop();
 		// Deliberately leave transmitted images in the terminal's graphics store:
 		// placeholder cells committed to native scrollback render only while their
 		// image data lives, so a delete-by-id here blanks every transcript image
@@ -2081,7 +2112,13 @@ export class TUI extends Container {
 		// enough; emitting `\r\n` would create an extra blank row. If the content
 		// already reaches the viewport bottom, scroll exactly once so the prompt
 		// lands directly below the last visible TUI row.
-		if (this.#previousFrameLength > 0) {
+		if (this.#hostAltScreen) {
+			// Return to the normal screen the session started from; the shell
+			// prompt reappears where it was, with the saved cursor.
+			this.terminal.write(`${this.#keyboardEnhancementExit()}\x1b[?1049l`);
+			setAltScreenActive(false);
+			this.#hostAltScreen = false;
+		} else if (this.#previousFrameLength > 0) {
 			// Provider frames anchor the mutable viewport below retained history;
 			// the shell prompt belongs on the first row after that content.
 			const targetRow = this.#providerViewportTop + this.#previousFrameLength;
@@ -2870,7 +2907,21 @@ export class TUI extends Container {
 		// scrolls only when history + viewport overflow the physical screen, and
 		// the rows that scroll off the top are exactly the oldest history rows.
 		const geometryStable = this.#hasEverRendered && this.#previousWidth === width && this.#previousHeight === height;
-		const startTop = destructiveReset ? 0 : Math.min(this.#providerViewportTop, Math.max(0, height - 1));
+		// Host-alt restore pins the viewport to the bottom row whenever the tail
+		// fills the screen, like a fullscreen TUI: the alternate screen has no
+		// scrollback to pull back down on a grow, so the CPR anchor would leave
+		// blank rows under the chrome.
+		const pinToBottom =
+			this.#hostAltScreen &&
+			restoreAbove !== undefined &&
+			!destructiveReset &&
+			historyRows.length === 0 &&
+			restoreAbove.length >= height - rows;
+		const startTop = destructiveReset
+			? 0
+			: pinToBottom
+				? Math.max(0, height - rows)
+				: Math.min(this.#providerViewportTop, Math.max(0, height - 1));
 		const newTop = Math.max(0, Math.min(startTop + historyRows.length, height - rows));
 		const pendingAltExit = this.#pendingAltExit;
 		let buffer = this.#paintBeginSequence + pendingAltExit;
@@ -3104,9 +3155,13 @@ export class TUI extends Container {
 			// modified-key reporting sequence on the freshly entered alternate
 			// screen, or Esc/modified keys revert to legacy encoding inside
 			// fullscreen overlays (Ghostty/kitty/iTerm2).
-			this.#noteAltBufferToggle();
-			this.#imageBudget.beginAltScreenLifecycle();
-			this.terminal.write(`\x1b[?1049h${this.#keyboardEnhancementEnter()}`);
+			// Host-alt mode already owns the alternate screen: the modal paints
+			// over the same buffer, so there is no switch and no keyboard re-push.
+			if (!this.#hostAltScreen) {
+				this.#noteAltBufferToggle();
+				this.#imageBudget.beginAltScreenLifecycle();
+				this.terminal.write(`\x1b[?1049h${this.#keyboardEnhancementEnter()}`);
+			}
 			this.#setMouseTracking(wantMouse);
 			setAltScreenActive(true);
 			this.terminal.hideCursor();
@@ -3126,13 +3181,18 @@ export class TUI extends Container {
 			// restore it in the fused exit or later frames see matching states
 			// and inline click/hover stays dead until the setting toggles.
 			const mouseEnter = wantMouse !== "off" && this.#mouseTracking === "off" ? MOUSE_TRACKING_ON : "";
-			const enhancementExit = this.#keyboardEnhancementExit();
-			const exitSequence = `${mouseExit}${mouseEnter}${enhancementExit}\x1b[?1049l`;
+			// Host-alt mode has no normal screen to fall back to: clear the modal
+			// and repaint the visible tail over it instead of leaving the buffer.
+			const exitSequence = this.#hostAltScreen
+				? `${mouseExit}${mouseEnter}\x1b[H\x1b[2J`
+				: `${mouseExit}${mouseEnter}${this.#keyboardEnhancementExit()}\x1b[?1049l`;
 			// Session replacement finishes while its fullscreen selector still
 			// covers the old normal buffer. Fuse the restore into the destructive
 			// repaint so no stale frame can become visible between writes.
 			if (this.#clearScrollbackOnNextRender) {
 				this.#pendingAltExit = exitSequence;
+			} else if (this.#hostAltScreen) {
+				this.terminal.write(exitSequence);
 			} else {
 				this.#noteAltBufferToggle();
 				this.terminal.write(exitSequence);
@@ -3148,7 +3208,10 @@ export class TUI extends Container {
 			// rewrap or a height-grow scrollback pull, while our viewport anchor
 			// stayed frozen. Recover the restored cursor position before any
 			// provider repaint can overwrite history at the stale row.
-			if (width !== this.#altEnterWidth || height !== this.#altEnterHeight) {
+			if (this.#hostAltScreen) {
+				this.#forceViewportRepaintOnNextRender = true;
+				this.#restoreScreenOnNextRender = true;
+			} else if (width !== this.#altEnterWidth || height !== this.#altEnterHeight) {
 				if (this.#frameProvider !== undefined) {
 					this.#beginResizeAnchorProbe();
 					return;
