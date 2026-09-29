@@ -51,6 +51,7 @@ interface AppKeybindings {
 	"app.session.fork": true;
 	"app.session.resume": true;
 	"app.session.observe": true;
+	"app.scrollback.open": true;
 	"app.session.togglePath": true;
 	"app.session.toggleSort": true;
 	"app.session.rename": true;
@@ -200,6 +201,12 @@ export const KEYBINDINGS = {
 	"app.session.observe": {
 		defaultKeys: "ctrl+s",
 		description: "Open the agent hub",
+	},
+	"app.scrollback.open": {
+		// Fork: only effective with PI_TUI_ALT_SCREEN=1 and `tui.scrollback` on.
+		// Not Shift+Up: that is the macOS fallback for app.message.dequeue.
+		defaultKeys: "pageUp",
+		description: "Open scrollback",
 	},
 	"app.session.togglePath": {
 		defaultKeys: "ctrl+p",

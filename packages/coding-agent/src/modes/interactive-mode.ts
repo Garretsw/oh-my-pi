@@ -1225,7 +1225,9 @@ export class InteractiveMode implements InteractiveModeContext {
 		// Keep generic pi-tui renderers aligned with the coding-agent setting.
 		applyHyperlinkSetting();
 		this.ui.setInlineMouseTrackingProvider(() => {
-			const on = this.#isMouseCaptureEnabled();
+			// Host-alt mode has no native scrollback: report the mouse for the
+			// whole session so swipes arrive as wheel events, not arrow keys.
+			const on = this.#isMouseCaptureEnabled() || this.ui.isHostAltScreen();
 			// Dropping capture must also drop the band: with reporting off no
 			// motion event will ever arrive to clear a mid-hover highlight.
 			// The controller cache goes too, or a re-enable plus motion over

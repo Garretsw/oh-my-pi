@@ -1205,6 +1205,11 @@ export class TUI extends Container {
 		this.#inlineMouseProvider = provider;
 	}
 
+	/** True while the UI is hosted on the alternate screen (`PI_TUI_ALT_SCREEN`). */
+	isHostAltScreen(): boolean {
+		return this.#hostAltScreen;
+	}
+
 	/** Transition mouse reporting, emitting only the sequences a change needs. */
 	#setMouseTracking(state: MouseTrackingState): void {
 		if (state === this.#mouseTracking) return;

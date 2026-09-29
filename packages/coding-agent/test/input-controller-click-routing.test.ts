@@ -12,7 +12,7 @@ const ESC = String.fromCharCode(27);
 // candidates below resolve it to the toggle sentinel.
 const EXPANDER_CLICK = `${ESC}[<0;5;3M`;
 
-function makeHarness() {
+function makeHarness(hostAlt = false) {
 	const listeners: Array<(data: string) => { consume?: boolean; data?: string } | undefined> = [];
 	const focused: string[] = [];
 	let toggled = 0;
@@ -23,6 +23,7 @@ function makeHarness() {
 			},
 			getMutableViewport: () => ({ top: 0, length: 5 }),
 			hasOverlay: () => false,
+			isHostAltScreen: () => hostAlt,
 			requestRender: () => {},
 			addStartListener: () => {},
 			getFocused: () => undefined,
@@ -52,6 +53,7 @@ function makeHarness() {
 	const controller = new InputController(ctx);
 	controller.setupKeyHandlers();
 	return {
+		send: (data: string) => listeners.map(listener => listener(data)),
 		click: () => {
 			for (const listener of listeners) listener(EXPANDER_CLICK);
 		},
@@ -91,5 +93,24 @@ describe("InputController click routing", () => {
 		h.click();
 		expect(h.toggled()).toBe(1);
 		expect(h.focused).toEqual([]);
+	});
+
+	it("swallows swipes and taps in host-alt mode without tui.mouse, so they never reach the editor", () => {
+		settings.set("tui.mouse", false);
+		// With the pager on, wheel-up opens it instead (covered in scrollback-wiring).
+		settings.set("tui.scrollback", "off");
+		const h = makeHarness(true);
+		for (const report of [`${ESC}[<64;5;3M`, `${ESC}[<65;5;3M`, `${ESC}[<0;5;3M`, `${ESC}[<3;5;3m`]) {
+			expect(h.send(report)).toContainEqual({ consume: true });
+		}
+		// Click-to-focus stays gated on tui.mouse.
+		expect(h.toggled()).toBe(0);
+		expect(h.focused).toEqual([]);
+	});
+
+	it("leaves mouse reports alone outside host-alt mode without tui.mouse", () => {
+		settings.set("tui.mouse", false);
+		const h = makeHarness(false);
+		expect(h.send(`${ESC}[<64;5;3M`).every(result => result === undefined)).toBe(true);
 	});
 });
