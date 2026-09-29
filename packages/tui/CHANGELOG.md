@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added `tui.scrollback: inline` for `PI_TUI_ALT_SCREEN=1`: swiping, PageUp/PageDown and `End` scroll the live screen in place with the editor and status kept on screen, a `↓ N new lines` marker counts output that arrives while scrolled back, and `app.scrollback.pager` (`alt+pageUp`) still opens the full-screen pager.
 - Added an in-app scrollback pager for `PI_TUI_ALT_SCREEN=1`: swiping (mouse wheel-up), `PageUp` or `app.scrollback.open` opens the whole conversation in a scrollable full-screen view (`tui.scrollback`), and wheel/tap reports no longer leak into prompt history or the editor.
 
 ### Fixed

@@ -1205,6 +1205,16 @@ export class TUI extends Container {
 		this.#inlineMouseProvider = provider;
 	}
 
+	/**
+	 * Repaint the whole visible screen from the provider's semantic tail on the
+	 * next frame, like a focus-in. For providers that painted something other
+	 * than the tail (e.g. a scrolled-back window) and are returning to it.
+	 */
+	requestScreenRestore(): void {
+		this.#restoreScreenOnNextRender = true;
+		this.requestRender(true);
+	}
+
 	/** True while the UI is hosted on the alternate screen (`PI_TUI_ALT_SCREEN`). */
 	isHostAltScreen(): boolean {
 		return this.#hostAltScreen;

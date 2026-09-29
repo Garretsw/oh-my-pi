@@ -1147,17 +1147,22 @@ export const SETTINGS_SCHEMA = {
 	},
 	"tui.scrollback": {
 		type: "enum",
-		values: ["off", "pager"] as const,
+		values: ["off", "pager", "inline"] as const,
 		default: "pager",
 		ui: {
 			tab: "appearance",
 			group: "Display",
 			label: "Scrollback",
 			description:
-				"In-app scrollback for the alternate-screen mode (PI_TUI_ALT_SCREEN=1): wheel-up or PageUp opens a pager over the full conversation. Has no effect on the normal screen",
+				"In-app scrollback for the alternate-screen mode (PI_TUI_ALT_SCREEN=1): wheel-up or PageUp opens a pager over the full conversation, or scrolls the live screen in place. Has no effect on the normal screen",
 			options: [
 				{ value: "off", label: "Off", description: "No scrollback; swipes and wheel events are swallowed" },
 				{ value: "pager", label: "Pager", description: "Open a full-screen pager over the whole conversation" },
+				{
+					value: "inline",
+					label: "Inline",
+					description: "Scroll the live screen in place with the editor and status kept on screen",
+				},
 			],
 		},
 	},
