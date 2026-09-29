@@ -179,6 +179,21 @@ export class TranscriptBrowser implements Component {
 		return this.#scrollView.getScrollOffset() !== before;
 	}
 
+	/** Current scroll offset, the largest reachable offset, and whether the view follows the tail. */
+	getScrollState(): { offset: number; max: number; following: boolean } {
+		return {
+			offset: this.#scrollView.getScrollOffset(),
+			max: this.#scrollView.getMaxScrollOffset(),
+			following: this.#followBottom,
+		};
+	}
+
+	/** Jump to an absolute logical body row offset (clamped). */
+	setScrollOffset(offset: number): void {
+		this.#scrollView.setScrollOffset(offset);
+		this.#syncFollowBottom();
+	}
+
 	/** Apply the ScrollView navigation key set. */
 	handleScrollKey(data: string): boolean {
 		if (!this.#scrollView.handleScrollKey(data)) return false;

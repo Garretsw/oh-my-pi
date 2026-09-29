@@ -1145,6 +1145,22 @@ export const SETTINGS_SCHEMA = {
 				"Capture mouse clicks in the main session so live subagent cards and HUD rows focus on click, with a hover highlight on the target. Native text selection becomes Shift+drag and wheel scroll becomes Shift+wheel while on",
 		},
 	},
+	"tui.scrollback": {
+		type: "enum",
+		values: ["off", "pager"] as const,
+		default: "pager",
+		ui: {
+			tab: "appearance",
+			group: "Display",
+			label: "Scrollback",
+			description:
+				"In-app scrollback for the alternate-screen mode (PI_TUI_ALT_SCREEN=1): wheel-up or PageUp opens a pager over the full conversation. Has no effect on the normal screen",
+			options: [
+				{ value: "off", label: "Off", description: "No scrollback; swipes and wheel events are swallowed" },
+				{ value: "pager", label: "Pager", description: "Open a full-screen pager over the whole conversation" },
+			],
+		},
+	},
 	"tui.tight": {
 		type: "boolean",
 		default: false,

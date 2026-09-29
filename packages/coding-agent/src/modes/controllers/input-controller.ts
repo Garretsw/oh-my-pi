@@ -35,6 +35,7 @@ import { AgentRegistry } from "../../registry/agent-registry";
 import type { RestoredQueuedMessage } from "../../session/agent-session-types";
 import { USER_INTERRUPT_LABEL } from "../../session/messages";
 import { PINNED_HUD_TOGGLE_ID } from "@oh-my-pi/pi-tui/prompt/composer";
+import { ScrollbackController } from "./scrollback-controller";
 import { pickRecentFocusableAgentId } from "./session-focus-controller";
 import { executeBuiltinSlashCommand, lookupBuiltinSlashCommand } from "../../slash-commands/builtin-registry";
 import { parseSlashCommand } from "../../slash-commands/helpers/parse";
@@ -193,7 +194,9 @@ export class InputController {
 			readText: readTextFromClipboard,
 			readMacFileUrls: readMacFileUrlsFromClipboard,
 		},
-	) {}
+	) {
+		this.#scrollback = new ScrollbackController(ctx);
+	}
 
 	/** Session-level title starts (user `/skill:` via promptCustomMessage) reuse this UI. */
 	notifyTitleGenerationStart(): (() => void) | undefined {
@@ -209,6 +212,7 @@ export class InputController {
 	#globalEditorActionsListenerInstalled = false;
 	#expandToolsListenerInstalled = false;
 	#inlineMouseListenerInstalled = false;
+	readonly #scrollback: ScrollbackController;
 
 	/** Click-candidate id the hover band currently tracks; repaint only on change. */
 	#lastHoverClickId: string | undefined;
@@ -404,6 +408,7 @@ export class InputController {
 			// Defers to fullscreen overlays, which own mouse handling on the
 			// alternate screen.
 			this.ctx.ui.addInputListener(data => this.#handleInlineMouse(data));
+			this.ctx.ui.addInputListener(data => (this.#scrollback.openOnKey(data) ? { consume: true } : undefined));
 		}
 		this.ctx.editor.onEscape = () => {
 			// `/mcp test` advertises Esc until each owner's post-settlement grace expires.
@@ -707,12 +712,18 @@ export class InputController {
 	 */
 	#handleInlineMouse(data: string): { consume?: boolean; data?: string } | undefined {
 		if (!data.startsWith("\x1b[<")) return undefined;
-		if (!settings.get("tui.mouse")) return undefined;
+		const capture = settings.get("tui.mouse");
+		// Host-alt mode reports the mouse for the whole session (swipes arrive
+		// as wheel events); reports nobody handles must never reach the editor.
+		if (!capture && !this.ctx.ui.isHostAltScreen()) return undefined;
 		if (this.ctx.ui.hasOverlay()) return undefined;
 		const event = parseSgrMouse(data);
 		if (!event) return undefined;
-		if (event.motion) this.#updateHoverHighlight(event.row);
-		else if (event.leftClick) this.#focusClickedAgent(event.row);
+		if (event.wheel === -1 && this.#scrollback.openOnWheelUp()) return { consume: true };
+		if (capture) {
+			if (event.motion) this.#updateHoverHighlight(event.row);
+			else if (event.leftClick) this.#focusClickedAgent(event.row);
+		}
 		return { consume: true };
 	}
 

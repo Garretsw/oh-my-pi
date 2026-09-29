@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added an in-app scrollback pager for `PI_TUI_ALT_SCREEN=1`: swiping (mouse wheel-up), `PageUp` or `app.scrollback.open` opens the whole conversation in a scrollable full-screen view (`tui.scrollback`), and wheel/tap reports no longer leak into prompt history or the editor.
+
 ### Fixed
 
 - Fixed a blank or stale screen after reattaching to tmux from a control-mode client (iTerm2, Shellfish) until the window was resized; the viewport now repaints when tmux reports focus returning to the pane.
