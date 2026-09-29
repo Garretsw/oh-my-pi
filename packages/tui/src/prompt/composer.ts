@@ -193,6 +193,9 @@ function rowTargetCandidates(target: Component): ((local: number) => string[]) |
  * It owns the terminal, welcome header, and editor; InteractiveMode later supplies authoritative
  * data and mounts the session-aware runtime children without replacing the visible header.
  */
+/** Minimum time between full-transcript re-renders while scrolled back. */
+const SCROLL_REFRESH_MS = 100;
+
 export class Composer implements TerminalFrameProvider {
 	readonly ui: TUI;
 	#editor: CustomEditor;
@@ -263,6 +266,16 @@ export class Composer implements TerminalFrameProvider {
 	// moment the height changes.
 	#retirementBelowFloor: number | undefined;
 	#lastInterruptAt = 0;
+	// In-place scrollback (PI_TUI_ALT_SCREEN, `tui.scrollback: inline`): the live
+	// screen shows a window of the full transcript ending at row `#scrollEnd`
+	// (exclusive) above the pinned editor/status chrome. undefined = following
+	// the tail. Rows are cached and refreshed at most every SCROLL_REFRESH_MS.
+	#scrollEnd: number | undefined;
+	#scrollPausedTotal = 0;
+	#scrollRows: readonly string[] = [];
+	#scrollRowsWidth = -1;
+	#scrollRowsAt = 0;
+	#scrollRefreshTimer: NodeJS.Timeout | undefined;
 	#started = false;
 	#stopped = false;
 	#transferred = false;
@@ -342,6 +355,14 @@ export class Composer implements TerminalFrameProvider {
 			return { viewport: this.#renderRoots(roots, width).slice(-rows) };
 		}
 		const transcript = roots[transcriptIndex] as TranscriptContainer;
+		const scrolled =
+			this.#scrollEnd === undefined
+				? undefined
+				: this.#renderScrolledFrame(transcript, width, rows, roots.slice(transcriptIndex + 1));
+		if (scrolled !== undefined) {
+			this.#lastClickSpans = [];
+			return { viewport: scrolled };
+		}
 		const preRoots = this.#renderRoots(roots.slice(0, transcriptIndex), width);
 		const afterRoots = roots.slice(transcriptIndex + 1);
 		const after: string[] = [];
@@ -441,6 +462,101 @@ export class Composer implements TerminalFrameProvider {
 			this.#retiredHeaderStart = Math.max(0, history.rows.length - visibleHeaderRows);
 		}
 		return { history, viewport: this.#paintHoverBand(mutable, spans) };
+	}
+
+	/** Whether the live screen is showing scrolled-back history. */
+	get scrolledBack(): boolean {
+		return this.#scrollEnd !== undefined;
+	}
+
+	/**
+	 * Scroll the live screen back (negative) or forward (positive) by `rows`,
+	 * keeping the editor and status pinned. Reaching the tail resumes following.
+	 * No-op outside PI_TUI_ALT_SCREEN, where the terminal owns scrollback.
+	 */
+	scrollBy(rows: number): void {
+		if (!this.ui.isHostAltScreen() || !this.#started || this.#stopped) return;
+		const transcript = this.#runtimeChildren.find(child => child instanceof TranscriptContainer);
+		if (transcript === undefined) return;
+		const width = Math.max(1, this.ui.terminal.columns);
+		this.#refreshScrollRows(transcript, width, true);
+		const total = this.#scrollRows.length;
+		if (this.#scrollEnd === undefined) {
+			if (rows >= 0) return;
+			this.#scrollEnd = total;
+			this.#scrollPausedTotal = total;
+		}
+		const next = this.#scrollEnd + rows;
+		if (next >= this.#scrollRows.length) this.scrollToTail();
+		else {
+			this.#scrollEnd = Math.max(1, next);
+			this.ui.requestRender();
+		}
+	}
+
+	/** Page size for in-place scrolling: one screen minus a row of overlap. */
+	scrollPage(direction: -1 | 1): void {
+		this.scrollBy(direction * Math.max(1, this.ui.terminal.rows - 1));
+	}
+
+	/** Leave scrolled-back mode and repaint the normal tail frame. */
+	scrollToTail(): void {
+		if (this.#scrollEnd === undefined) return;
+		this.#scrollEnd = undefined;
+		this.#scrollPausedTotal = 0;
+		this.ui.requestScreenRestore();
+	}
+
+	#refreshScrollRows(transcript: TranscriptContainer, width: number, force = false): void {
+		const now = this.#now();
+		const stale = now - this.#scrollRowsAt >= SCROLL_REFRESH_MS;
+		if (!force && width === this.#scrollRowsWidth && !stale) {
+			if (this.#scrollRefreshTimer === undefined && !this.#stopped) {
+				this.#scrollRefreshTimer = setTimeout(
+					() => {
+						this.#scrollRefreshTimer = undefined;
+						if (this.#scrollEnd !== undefined) this.ui.requestRender();
+					},
+					Math.max(1, SCROLL_REFRESH_MS - (now - this.#scrollRowsAt)),
+				);
+				this.#scrollRefreshTimer.unref?.();
+			}
+			return;
+		}
+		this.#scrollRows = transcript.render(width);
+		this.#scrollRowsWidth = width;
+		this.#scrollRowsAt = now;
+	}
+
+	/** Window of the full transcript above the pinned chrome, plus a new-output marker row. */
+	#renderScrolledFrame(
+		transcript: TranscriptContainer,
+		width: number,
+		rows: number,
+		afterRoots: readonly Component[],
+	): string[] | undefined {
+		this.#refreshScrollRows(transcript, width);
+		const chrome = this.#renderRoots(afterRoots, width);
+		const bodyRows = Math.max(0, rows - chrome.length - 1);
+		const total = this.#scrollRows.length;
+		const end = Math.min(Math.max(this.#scrollEnd ?? total, Math.min(bodyRows, total)), total);
+		if (bodyRows === 0 || end >= total) {
+			// No room for a window, or the content shrank back to the tail.
+			this.#scrollEnd = undefined;
+			this.#scrollPausedTotal = 0;
+			this.ui.requestScreenRestore();
+			return undefined;
+		}
+		this.#scrollEnd = end;
+		const fresh = Math.max(0, total - this.#scrollPausedTotal);
+		const marker = theme.fg(
+			"dim",
+			truncateToWidth(
+				`↓ ${fresh > 0 ? `${fresh} new lines` : "scrolled back"} ${theme.sep.dot} wheel-down / End for latest`,
+				width,
+			),
+		);
+		return [...this.#scrollRows.slice(Math.max(0, end - bodyRows), end), marker, ...chrome].slice(-rows);
 	}
 
 	/**
@@ -880,6 +996,7 @@ export class Composer implements TerminalFrameProvider {
 	stop(): void {
 		if (!this.#started || this.#stopped || this.#transferred) return;
 		this.#welcome?.stopIntro();
+		clearTimeout(this.#scrollRefreshTimer);
 		this.ui.stop();
 		this.#stopped = true;
 	}

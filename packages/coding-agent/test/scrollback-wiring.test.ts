@@ -111,3 +111,112 @@ describe("scrollback pager wiring (PI_TUI_ALT_SCREEN)", () => {
 		expect(shows("history-line-199")).toBe(true);
 	});
 });
+
+describe("inline scrollback wiring (PI_TUI_ALT_SCREEN, tui.scrollback: inline)", () => {
+	let tempDir: TempDir;
+	let authStorage: AuthStorage;
+	let session: AgentSession;
+	let mode: InteractiveMode;
+	let term: VirtualTerminal;
+	let previousAlt: string | undefined;
+
+	beforeAll(() => {
+		initTheme();
+	});
+
+	beforeEach(async () => {
+		previousAlt = Bun.env.PI_TUI_ALT_SCREEN;
+		Bun.env.PI_TUI_ALT_SCREEN = "1";
+		resetSettingsForTest();
+		tempDir = TempDir.createSync("@pi-scrollback-inline-");
+		await Settings.init({ inMemory: true, cwd: tempDir.path() });
+		settings.set("tui.scrollback", "inline");
+		authStorage = await AuthStorage.create(path.join(tempDir.path(), "testauth.db"));
+		const modelRegistry = new ModelRegistry(authStorage);
+		const model = modelRegistry.find("anthropic", "claude-sonnet-4-5");
+		if (!model) throw new Error("Expected claude-sonnet-4-5 to exist in registry");
+		session = new AgentSession({
+			agent: new Agent({ initialState: { model, systemPrompt: ["Test"], tools: [], messages: [] } }),
+			sessionManager: SessionManager.create(tempDir.path(), tempDir.path()),
+			settings: Settings.isolated(),
+			modelRegistry,
+		});
+		term = new VirtualTerminal(80, 24);
+		const composer = new Composer({ terminal: term });
+		mode = new InteractiveMode(session, "test", undefined, () => {}, undefined, undefined, undefined, composer);
+		await mode.init({ suppressWelcomeIntro: true });
+		void mode.getUserInput();
+		for (let index = 0; index < 200; index++) mode.chatContainer.addChild(new Text(`history-line-${index}`, 1, 0));
+		mode.ui.requestRender();
+		await term.waitForRender();
+	});
+
+	afterEach(async () => {
+		mode?.stop();
+		await session?.dispose();
+		authStorage?.close();
+		tempDir?.removeSync();
+		resetSettingsForTest();
+		if (previousAlt === undefined) delete Bun.env.PI_TUI_ALT_SCREEN;
+		else Bun.env.PI_TUI_ALT_SCREEN = previousAlt;
+	});
+
+	const shows = (text: string) => plainRows(term.getViewport()).some(row => row.includes(text));
+	const lastHistoryLine = () => {
+		const numbers = plainRows(term.getViewport())
+			.map(row => /history-line-(\d+)/.exec(row)?.[1])
+			.filter((value): value is string => value !== undefined)
+			.map(Number);
+		return numbers.at(-1);
+	};
+
+	it("scrolls the live screen in place, keeps typing in the editor, and returns to the tail", async () => {
+		expect(lastHistoryLine()).toBe(199);
+		term.sendInput(WHEEL_UP);
+		await term.waitForRender(() => shows("scrolled back"));
+		const scrolledTo = lastHistoryLine();
+		expect(scrolledTo).toBeLessThan(199);
+		// No pager: this is the live screen with the editor still on it.
+		expect(shows("Scrollback")).toBe(false);
+
+		term.sendInput("x");
+		await term.waitForRender();
+		expect(mode.editor.getText()).toBe("x");
+		expect(lastHistoryLine()).toBe(scrolledTo);
+
+		term.sendInput(WHEEL_DOWN);
+		await term.waitForRender(() => !shows("scrolled back"));
+		expect(lastHistoryLine()).toBe(199);
+		expect(mode.editor.getText()).toBe("x");
+	});
+
+	it("pages with PageUp and returns to the tail with End", async () => {
+		term.sendInput("\x1b[5~");
+		await term.waitForRender(() => shows("scrolled back"));
+		const paged = lastHistoryLine()!;
+		expect(199 - paged).toBeGreaterThan(8);
+
+		term.sendInput("\x1b[6~");
+		await term.waitForRender(() => !shows("scrolled back"));
+		expect(lastHistoryLine()).toBe(199);
+
+		term.sendInput("\x1b[5~");
+		await term.waitForRender(() => shows("scrolled back"));
+		term.sendInput("\x1b[F");
+		await term.waitForRender(() => !shows("scrolled back"));
+		expect(lastHistoryLine()).toBe(199);
+	});
+
+	it("holds the view while output streams in and counts the new lines", async () => {
+		term.sendInput(WHEEL_UP);
+		await term.waitForRender(() => shows("scrolled back"));
+		const scrolledTo = lastHistoryLine();
+
+		for (let index = 200; index < 212; index++) mode.chatContainer.addChild(new Text(`history-line-${index}`, 1, 0));
+		await Bun.sleep(150);
+		mode.ui.requestRender();
+		await term.waitForRender(() => shows("24 new lines"));
+		expect(shows("24 new lines")).toBe(true);
+		expect(lastHistoryLine()).toBe(scrolledTo);
+	});
+});

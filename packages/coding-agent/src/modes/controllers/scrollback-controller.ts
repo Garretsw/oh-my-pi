@@ -1,4 +1,5 @@
 import { ScrollbackPager, type ScrollbackSnapshot, WHEEL_STEP } from "@oh-my-pi/pi-tui/overlays/scrollback-pager";
+import { matchesKey } from "@oh-my-pi/pi-tui/keys";
 import { settings } from "../../config/settings";
 import type { InteractiveModeContext } from "../types";
 
@@ -13,27 +14,73 @@ export class ScrollbackController {
 
 	constructor(private readonly ctx: InteractiveModeContext) {}
 
-	/** Whether the pager may open: host-alt mode and `tui.scrollback` = pager. */
+	/** Active scrollback mode: off outside host-alt mode or when `tui.scrollback` is off. */
+	get mode(): "off" | "pager" | "inline" {
+		return this.ctx.ui.isHostAltScreen() ? settings.get("tui.scrollback") : "off";
+	}
+
+	/** Whether the pager may open (pager and inline modes). */
 	get enabled(): boolean {
-		return this.ctx.ui.isHostAltScreen() && settings.get("tui.scrollback") === "pager";
+		return this.mode !== "off";
 	}
 
-	/** Wheel-up on the live screen opens the pager and applies that first step. */
-	openOnWheelUp(): boolean {
-		if (!this.enabled || this.ctx.ui.hasOverlay()) return false;
-		this.open(-WHEEL_STEP);
-		return true;
+	/**
+	 * Wheel on the live screen. Pager mode opens the pager on wheel-up; inline
+	 * mode scrolls the live screen in place. Returns true when consumed.
+	 */
+	handleWheel(direction: -1 | 1): boolean {
+		if (this.ctx.ui.hasOverlay()) return false;
+		switch (this.mode) {
+			case "pager":
+				if (direction !== -1) return false;
+				this.open(-WHEEL_STEP);
+				return true;
+			case "inline":
+				this.ctx.composer.scrollBy(direction * WHEEL_STEP);
+				return true;
+			default:
+				return false;
+		}
 	}
 
-	/** The `app.scrollback.open` key; yields to the editor when it owns PageUp. */
-	openOnKey(data: string): boolean {
-		if (!this.enabled || this.ctx.ui.hasOverlay()) return false;
+	/** Keys that drive scrollback from the editor; yields to the editor when it owns them. */
+	handleKey(data: string): boolean {
+		const mode = this.mode;
+		if (mode === "off" || this.ctx.ui.hasOverlay()) return false;
 		if (this.ctx.ui.getFocused() !== this.ctx.editor) return false;
-		if (!this.ctx.keybindings.matches(data, "app.scrollback.open")) return false;
-		// A multi-line draft (or an open completion list) pages with PageUp.
-		if (this.ctx.editor.getText().includes("\n") || this.ctx.editor.isShowingAutocomplete()) return false;
-		this.open(0);
-		return true;
+		const keys = this.ctx.keybindings;
+		if (keys.matches(data, "app.scrollback.pager") && this.editorYields()) {
+			this.open(0);
+			return true;
+		}
+		if (mode === "pager") {
+			if (!keys.matches(data, "app.scrollback.open") || !this.editorYields()) return false;
+			this.open(0);
+			return true;
+		}
+		const composer = this.ctx.composer;
+		if (matchesKey(data, "pageUp") && this.editorYields()) {
+			composer.scrollPage(-1);
+			return true;
+		}
+		if (composer.scrolledBack) {
+			if (matchesKey(data, "pageDown") && this.editorYields()) {
+				composer.scrollPage(1);
+				return true;
+			}
+			if (matchesKey(data, "end")) {
+				composer.scrollToTail();
+				return true;
+			}
+			// Sending the prompt returns to the live tail; the key still reaches the editor.
+			if (matchesKey(data, "enter")) composer.scrollToTail();
+		}
+		return false;
+	}
+
+	/** A multi-line draft (or an open completion list) pages with PageUp/PageDown itself. */
+	editorYields(): boolean {
+		return !this.ctx.editor.getText().includes("\n") && !this.ctx.editor.isShowingAutocomplete();
 	}
 
 	open(initialScroll: number): void {

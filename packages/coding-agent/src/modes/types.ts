@@ -1,3 +1,4 @@
+import type { Composer } from "@oh-my-pi/pi-tui/prompt/composer";
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import type { CompactionOutcome } from "@oh-my-pi/pi-agent-core/compaction";
 import type { AssistantMessage, ImageContent, Model, Usage, UsageReport } from "@oh-my-pi/pi-ai";
@@ -107,6 +108,8 @@ export interface InteractiveModeContext {
 	// UI access
 	ui: TUI;
 	chatContainer: TranscriptContainer;
+	/** Frame provider owning the live screen (in-place scrollback state). */
+	readonly composer: Composer;
 	pendingMessagesContainer: Container;
 	statusContainer: Container;
 	/** Whether the status/working row rendered lines in the latest frame; the band composer's editor top gap collapses only then. */

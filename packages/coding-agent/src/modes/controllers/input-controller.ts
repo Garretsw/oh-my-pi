@@ -408,7 +408,7 @@ export class InputController {
 			// Defers to fullscreen overlays, which own mouse handling on the
 			// alternate screen.
 			this.ctx.ui.addInputListener(data => this.#handleInlineMouse(data));
-			this.ctx.ui.addInputListener(data => (this.#scrollback.openOnKey(data) ? { consume: true } : undefined));
+			this.ctx.ui.addInputListener(data => (this.#scrollback.handleKey(data) ? { consume: true } : undefined));
 		}
 		this.ctx.editor.onEscape = () => {
 			// `/mcp test` advertises Esc until each owner's post-settlement grace expires.
@@ -719,7 +719,7 @@ export class InputController {
 		if (this.ctx.ui.hasOverlay()) return undefined;
 		const event = parseSgrMouse(data);
 		if (!event) return undefined;
-		if (event.wheel === -1 && this.#scrollback.openOnWheelUp()) return { consume: true };
+		if (event.wheel !== null && this.#scrollback.handleWheel(event.wheel)) return { consume: true };
 		if (capture) {
 			if (event.motion) this.#updateHoverHighlight(event.row);
 			else if (event.leftClick) this.#focusClickedAgent(event.row);

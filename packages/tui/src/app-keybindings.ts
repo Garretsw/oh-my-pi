@@ -52,6 +52,7 @@ interface AppKeybindings {
 	"app.session.resume": true;
 	"app.session.observe": true;
 	"app.scrollback.open": true;
+	"app.scrollback.pager": true;
 	"app.session.togglePath": true;
 	"app.session.toggleSort": true;
 	"app.session.rename": true;
@@ -207,6 +208,12 @@ export const KEYBINDINGS = {
 		// Not Shift+Up: that is the macOS fallback for app.message.dequeue.
 		defaultKeys: "pageUp",
 		description: "Open scrollback",
+	},
+	"app.scrollback.pager": {
+		// With `tui.scrollback: inline`, PageUp/PageDown scroll the live screen in
+		// place, so the full-screen pager gets its own key.
+		defaultKeys: "alt+pageUp",
+		description: "Open scrollback pager",
 	},
 	"app.session.togglePath": {
 		defaultKeys: "ctrl+p",
