@@ -21,6 +21,8 @@ This repo contains multiple packages, but **`packages/coding-agent/`** is the pr
 | `packages/utils`        | Shared utilities (logger, streams, temp files)                                          |
 | `crates/pi-natives`     | Rust crate for performance-critical text/grep ops                                       |
 
+**Architecture map**: see [docs/architecture-map.md](docs/architecture-map.md) for the layer stack, dependency direction, and key execution paths (boot, agent turn, tool call, edit, subagent, model policy).
+
 **Catalog import convention**: code in this repo imports catalog _values_ (bundled models, model-thinking helpers, identity, descriptors, model manager/cache) from `@oh-my-pi/pi-catalog/<module>` — never via `@oh-my-pi/pi-ai`. The pi-ai barrel re-exports only the model/effort _types_ its own signatures use (`Model`, `Api`, `ThinkingConfig`, `Effort`, …); type-only imports of those from `@oh-my-pi/pi-ai` are fine.
 
 ## GitHub
