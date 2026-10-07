@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { Agent } from "@oh-my-pi/pi-agent-core";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { resetSettingsForTest, Settings, settings } from "@oh-my-pi/pi-coding-agent/config/settings";
+import { cfgTuiScrollback } from "@oh-my-pi/pi-coding-agent/modes/settings";
 import { InteractiveMode } from "@oh-my-pi/pi-coding-agent/modes/interactive-mode";
 import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
@@ -90,7 +91,7 @@ describe("scrollback pager wiring (PI_TUI_ALT_SCREEN)", () => {
 	});
 
 	it("swallows swipes and taps without opening anything when tui.scrollback is off", async () => {
-		settings.set("tui.scrollback", "off");
+		cfgTuiScrollback.set(settings, "off");
 		await start();
 		for (const report of [WHEEL_UP, WHEEL_DOWN, ...TAP]) term.sendInput(report);
 		await term.waitForRender();
@@ -130,7 +131,7 @@ describe("inline scrollback wiring (PI_TUI_ALT_SCREEN, tui.scrollback: inline)",
 		resetSettingsForTest();
 		tempDir = TempDir.createSync("@pi-scrollback-inline-");
 		await Settings.init({ inMemory: true, cwd: tempDir.path() });
-		settings.set("tui.scrollback", "inline");
+		cfgTuiScrollback.set(settings, "inline");
 		authStorage = await AuthStorage.create(path.join(tempDir.path(), "testauth.db"));
 		const modelRegistry = new ModelRegistry(authStorage);
 		const model = modelRegistry.find("anthropic", "claude-sonnet-4-5");

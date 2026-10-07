@@ -1,6 +1,6 @@
 import { ScrollbackPager, type ScrollbackSnapshot, WHEEL_STEP } from "@oh-my-pi/pi-tui/overlays/scrollback-pager";
 import { matchesKey } from "@oh-my-pi/pi-tui/keys";
-import { settings } from "../../config/settings";
+import { cfgTuiScrollback } from "../settings";
 import type { InteractiveModeContext } from "../types";
 
 /**
@@ -16,7 +16,7 @@ export class ScrollbackController {
 
 	/** Active scrollback mode: off outside host-alt mode or when `tui.scrollback` is off. */
 	get mode(): "off" | "pager" | "inline" {
-		return this.ctx.ui.isHostAltScreen() ? settings.get("tui.scrollback") : "off";
+		return this.ctx.ui.isHostAltScreen() ? cfgTuiScrollback.get(this.ctx.settings) : "off";
 	}
 
 	/** Whether the pager may open (pager and inline modes). */

@@ -3,9 +3,12 @@ import { KeybindingsManager } from "@oh-my-pi/pi-tui/app-keybindings";
 import { resetSettingsForTest, Settings, settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { PINNED_HUD_TOGGLE_ID } from "@oh-my-pi/pi-tui/prompt/composer";
 import { InputController } from "@oh-my-pi/pi-coding-agent/modes/controllers/input-controller";
+import { SpaceHoldGesture } from "@oh-my-pi/pi-tui/space-hold";
 import type { InteractiveModeContext } from "@oh-my-pi/pi-coding-agent/modes/types";
 import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
+
+import { cfgTuiMouse, cfgTuiScrollback } from "@oh-my-pi/pi-coding-agent/modes/settings";
 
 const ESC = String.fromCharCode(27);
 // SGR click on viewport row 2 (1-based y=3): the pinned expander row when the
@@ -34,8 +37,11 @@ function makeHarness(hostAlt = false) {
 			setActionKeys: () => {},
 			setCustomKeyHandler: () => {},
 			clearCustomKeyHandlers: () => {},
+			spaceHold: new SpaceHoldGesture(() => {}),
 		},
 		keybindings: KeybindingsManager.inMemory(),
+		settings,
+		dictationSpaceHold: () => undefined,
 		session: {
 			extensionRunner: undefined,
 		},
@@ -66,7 +72,7 @@ describe("InputController click routing", () => {
 	beforeEach(async () => {
 		AgentRegistry.resetGlobalForTests();
 		await Settings.init({ inMemory: true });
-		settings.set("tui.mouse", true);
+		cfgTuiMouse.set(settings, true);
 	});
 
 	afterEach(() => {
@@ -96,9 +102,9 @@ describe("InputController click routing", () => {
 	});
 
 	it("swallows swipes and taps in host-alt mode without tui.mouse, so they never reach the editor", () => {
-		settings.set("tui.mouse", false);
+		cfgTuiMouse.set(settings, false);
 		// With the pager on, wheel-up opens it instead (covered in scrollback-wiring).
-		settings.set("tui.scrollback", "off");
+		cfgTuiScrollback.set(settings, "off");
 		const h = makeHarness(true);
 		for (const report of [`${ESC}[<64;5;3M`, `${ESC}[<65;5;3M`, `${ESC}[<0;5;3M`, `${ESC}[<3;5;3m`]) {
 			expect(h.send(report)).toContainEqual({ consume: true });
@@ -109,7 +115,7 @@ describe("InputController click routing", () => {
 	});
 
 	it("leaves mouse reports alone outside host-alt mode without tui.mouse", () => {
-		settings.set("tui.mouse", false);
+		cfgTuiMouse.set(settings, false);
 		const h = makeHarness(false);
 		expect(h.send(`${ESC}[<64;5;3M`).every(result => result === undefined)).toBe(true);
 	});
