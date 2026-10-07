@@ -2572,14 +2572,10 @@ export class TUI extends Container {
 			const mouseExit = this.#mouseTracking !== "off" ? MOUSE_TRACKING_OFF : "";
 			// Host-alt mode leaves the alternate screen once, at the end of stop().
 			const exitSequence = this.#pendingAltExit
- 			? `${this.#takePendingAltEnter()}${this.#pendingAltExit}${mouseExit}`
- 			: this.#hostAltScreen
- 				? mouseExit
- 				: `${mouseExit}${this.#keyboardEnhancementExit()}\x1b[?1049l`;
- 		// The surface already holds the transcript; there's no row history to retire.
- 		// Host-alt mode has no native history to hand to the shell: anything
- 		// flushed here would be discarded with the alternate screen.
- 		if (!nativeWasLive && !this.#hostAltScreen) this.#flushHistoryBeforeStop();
+				? `${this.#takePendingAltEnter()}${this.#pendingAltExit}${mouseExit}`
+				: this.#hostAltScreen
+					? mouseExit
+					: `${mouseExit}${this.#keyboardEnhancementExit()}\x1b[?1049l`;
 			this.terminal.write(exitSequence);
 			if (!this.#hostAltScreen) setAltScreenActive(false);
 			this.#altActive = false;
@@ -2600,14 +2596,10 @@ export class TUI extends Container {
 		// erase native history and re-stream the whole transcript at quit; drop
 		// the latch so the flush below writes only un-retired rows.
 		this.#clearScrollbackOnNextRender = false;
- 			? `${this.#takePendingAltEnter()}${this.#pendingAltExit}${mouseExit}`
- 			: this.#hostAltScreen
- 				? mouseExit
- 				: `${mouseExit}${this.#keyboardEnhancementExit()}\x1b[?1049l`;
- 		// The surface already holds the transcript; there's no row history to retire.
- 		// Host-alt mode has no native history to hand to the shell: anything
- 		// flushed here would be discarded with the alternate screen.
- 		if (!nativeWasLive && !this.#hostAltScreen) this.#flushHistoryBeforeStop();
+		// The surface already holds the transcript; there's no row history to retire.
+		// Host-alt mode has no native history to hand to the shell: anything
+		// flushed here would be discarded with the alternate screen.
+		if (!nativeWasLive && !this.#hostAltScreen) this.#flushHistoryBeforeStop();
 		// Deliberately leave transmitted images in the terminal's graphics store:
 		// placeholder cells committed to native scrollback render only while their
 		// image data lives, so a delete-by-id here blanks every transcript image

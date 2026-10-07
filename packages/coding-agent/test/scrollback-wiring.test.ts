@@ -91,7 +91,7 @@ describe("scrollback pager wiring (PI_TUI_ALT_SCREEN)", () => {
 	});
 
 	it("swallows swipes and taps without opening anything when tui.scrollback is off", async () => {
-		cfgTuiScrollback.set(settings, "off");
+		cfgTuiScrollback.set(mode.settings, "off");
 		await start();
 		for (const report of [WHEEL_UP, WHEEL_DOWN, ...TAP]) term.sendInput(report);
 		await term.waitForRender();
@@ -131,7 +131,6 @@ describe("inline scrollback wiring (PI_TUI_ALT_SCREEN, tui.scrollback: inline)",
 		resetSettingsForTest();
 		tempDir = TempDir.createSync("@pi-scrollback-inline-");
 		await Settings.init({ inMemory: true, cwd: tempDir.path() });
-		cfgTuiScrollback.set(settings, "inline");
 		authStorage = await AuthStorage.create(path.join(tempDir.path(), "testauth.db"));
 		const modelRegistry = new ModelRegistry(authStorage);
 		const model = modelRegistry.find("anthropic", "claude-sonnet-4-5");
@@ -139,7 +138,7 @@ describe("inline scrollback wiring (PI_TUI_ALT_SCREEN, tui.scrollback: inline)",
 		session = new AgentSession({
 			agent: new Agent({ initialState: { model, systemPrompt: ["Test"], tools: [], messages: [] } }),
 			sessionManager: SessionManager.create(tempDir.path(), tempDir.path()),
-			settings: Settings.isolated(),
+			settings: Settings.isolated({ "tui.scrollback": "inline" }),
 			modelRegistry,
 		});
 		term = new VirtualTerminal(80, 24);
